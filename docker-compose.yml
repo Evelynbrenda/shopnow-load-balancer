@@ -1,0 +1,33 @@
+
+services:
+  servidor1:
+    build: .
+    environment:
+      SERVER_ID: "Servidor 1"
+    ports:
+      - "8081:80"
+
+  servidor2:
+    build: .
+    environment:
+      SERVER_ID: "Servidor 2"
+    ports:
+      - "8082:80"
+
+  servidor3:
+    build: .
+    environment:
+      SERVER_ID: "Servidor 3"
+    ports:
+      - "8083:80"
+
+  balanceador:
+    build:
+      context: .
+      dockerfile: Dockerfile.lb
+    ports:
+      - "8080:80"
+    depends_on:
+      - servidor1
+      - servidor2
+      - servidor3
