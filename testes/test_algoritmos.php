@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../balanceador/RoundRobin.php';
+require_once __DIR__ . '/../balanceador/LeastResponseTime.php';
 require_once __DIR__ . '/../balanceador/LeastConnections.php';
 
 $passed = 0;
@@ -96,6 +97,55 @@ test('Least Connections considera zero para servidor sem contador', function () 
         'Servidor 1',
         LeastConnections::choose($servers, [])
     );
+});
+
+
+test('Least Response Time escolhe o servidor com menor tempo medio', function () use ($servers) {
+    $responseTimes = [
+        'Servidor 1' => 120.0,
+        'Servidor 2' => 45.0,
+        'Servidor 3' => 90.0
+    ];
+
+    assertSameValue(
+        'Servidor 2',
+        LeastResponseTime::choose($servers, $responseTimes)
+    );
+});
+
+test('Least Response Time prioriza servidores ainda nao medidos', function () use ($servers) {
+    $responseTimes = [
+        'Servidor 1' => 20.0
+    ];
+
+    assertSameValue(
+        'Servidor 2',
+        LeastResponseTime::choose($servers, $responseTimes)
+    );
+});
+
+test('Least Response Time alterna servidores em caso de empate', function () use ($servers) {
+    $responseTimes = [
+        'Servidor 1' => 50.0,
+        'Servidor 2' => 50.0,
+        'Servidor 3' => 80.0
+    ];
+
+    assertSameValue(
+        'Servidor 1',
+        LeastResponseTime::choose($servers, $responseTimes, 0)
+    );
+
+    assertSameValue(
+        'Servidor 2',
+        LeastResponseTime::choose($servers, $responseTimes, 1)
+    );
+});
+
+test('Least Response Time atualiza a media movel', function () {
+    $average = LeastResponseTime::updateAverage(100.0, 200.0);
+
+    assertSameValue(130.0, $average);
 });
 
 echo "\nResultado: $passed aprovados; $failed falharam.\n";

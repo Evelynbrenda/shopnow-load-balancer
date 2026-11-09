@@ -1,9 +1,9 @@
-
 services:
   servidor1:
     build: .
     environment:
       SERVER_ID: "Servidor 1"
+      RESPONSE_DELAY_MS: "30"
     ports:
       - "8081:80"
 
@@ -11,6 +11,7 @@ services:
     build: .
     environment:
       SERVER_ID: "Servidor 2"
+      RESPONSE_DELAY_MS: "150"
     ports:
       - "8082:80"
 
@@ -18,6 +19,7 @@ services:
     build: .
     environment:
       SERVER_ID: "Servidor 3"
+      RESPONSE_DELAY_MS: "300"
     ports:
       - "8083:80"
 
