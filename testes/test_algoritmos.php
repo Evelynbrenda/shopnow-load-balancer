@@ -61,16 +61,33 @@ test('Least Connections escolhe o servidor com menos conexoes', function () use 
     );
 });
 
-test('Least Connections escolhe o primeiro em caso de empate', function () use ($servers) {
+test('Least Connections alterna servidores em caso de empate', function () use ($servers) {
     $connections = [
         'Servidor 1' => 2,
         'Servidor 2' => 2,
         'Servidor 3' => 2
     ];
 
+    $expected = ['Servidor 1', 'Servidor 2', 'Servidor 3'];
+
+    foreach ($expected as $index => $server) {
+        assertSameValue(
+            $server,
+            LeastConnections::choose($servers, $connections, $index)
+        );
+    }
+});
+
+test('Least Connections prioriza o menor número de conexões mesmo com índice rotativo', function () use ($servers) {
+    $connections = [
+        'Servidor 1' => 5,
+        'Servidor 2' => 1,
+        'Servidor 3' => 3
+    ];
+
     assertSameValue(
-        'Servidor 1',
-        LeastConnections::choose($servers, $connections)
+        'Servidor 2',
+        LeastConnections::choose($servers, $connections, 2)
     );
 });
 

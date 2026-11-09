@@ -49,10 +49,18 @@ class LoadBalancer
         if (!$healthy) return null;
 
         return $this->withLockedState(function (&$state) use ($algorithm, $healthy) {
-            if ($algorithm === 'least_connections') {
-                $selected = LeastConnections::choose($healthy, $state['connections']);
+          if ($algorithm === 'least_connections') {
+                $selected = LeastConnections::choose(
+                    $healthy,
+                    $state['connections'],
+                    (int)$state['next_index']
+                );
+                $state['next_index']++;
             } else {
-                $selected = RoundRobin::choose($healthy, (int)$state['next_index']);
+                $selected = RoundRobin::choose(
+                    $healthy,
+                    (int)$state['next_index']
+                );
                 $state['next_index']++;
             }
             $state['connections'][$selected]++;

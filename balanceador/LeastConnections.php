@@ -1,14 +1,31 @@
 <?php
 class LeastConnections
 {
-    public static function choose(array $healthyServers, array $connections): string
-    {
-        $selected = $healthyServers[0];
+    public static function choose(
+        array $healthyServers,
+        array $connections,
+        int $tieBreakIndex = 0
+    ): string {
+        if (empty($healthyServers)) {
+            throw new InvalidArgumentException('Nenhum servidor disponível.');
+        }
+
+        $minimum = PHP_INT_MAX;
+        $candidates = [];
+
         foreach ($healthyServers as $server) {
-            if (($connections[$server] ?? 0) < ($connections[$selected] ?? 0)) {
-                $selected = $server;
+            $activeConnections = $connections[$server] ?? 0;
+
+            if ($activeConnections < $minimum) {
+                $minimum = $activeConnections;
+                $candidates = [$server];
+            } elseif ($activeConnections === $minimum) {
+                $candidates[] = $server;
             }
         }
-        return $selected;
+
+        $position = $tieBreakIndex % count($candidates);
+
+        return $candidates[$position];
     }
 }
