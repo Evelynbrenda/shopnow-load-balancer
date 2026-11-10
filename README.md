@@ -248,22 +248,31 @@ docker run --rm --network shopnow-load-balancer_default alpine:3.20 sh -c "apk a
 | Métrica | Round Robin | Least Connections |
 |---|---:|---:|
 | Requisições concluídas | 1.000 | 1.000 |
-| Falhas | 0 | 0 |
-| Tempo total | 10,747 s | 10,623 s |
-| Requisições por segundo | 93,05 | 94,14 |
-| Tempo médio por requisição | 537,355 ms | 531,129 ms |
-| Mediana | 359 ms | 455 ms |
-| Maior tempo | 4.597 ms | 1.392 ms |
+| Falhas reais (Connect / Receive / Exceptions / não-2xx) | 0 | 0 |
+| "Failed requests" do ab (todas do tipo `Length`) | 666 | 301 |
+| Tempo total | 7,691 s | 6,356 s |
+| Requisições por segundo | 130,02 | 157,33 |
+| Tempo médio por requisição | 384,550 ms | 317,800 ms |
+| Mediana | 350 ms | 266 ms |
+| 95% das requisições em até | 790 ms | 621 ms |
+| Maior tempo | 1.032 ms | 921 ms |
+
+### Sobre o "Failed requests"
+
+O `ab` usa o tamanho da primeira resposta como referência (161 bytes) e conta como falha qualquer resposta de tamanho diferente. O Servidor 1 responde `"artificial_delay_ms": 30` e os Servidores 2 e 3 respondem `150` e `300`, um dígito a mais. Então essas "falhas" são só respostas dos Servidores 2 e 3, todas com HTTP 200.
+
+Isso acaba mostrando a distribuição:
+
+- Round Robin: 666 de 1.000, exatamente 2/3 para os Servidores 2 e 3.
+- Least Connections: 301 de 1.000, ou seja, cerca de 70% foi para o Servidor 1.
 
 ### Análise dos resultados
 
-Os dois algoritmos concluíram as 1.000 requisições sem falhas.
+Nessa execução o Least Connections foi melhor em todas as métricas: cerca de 21% mais requisições por segundo e mediana 84 ms menor.
 
-O Least Connections apresentou uma vazão ligeiramente superior, com 94,14 requisições por segundo, enquanto o Round Robin alcançou 93,05 requisições por segundo.
+O motivo é que o Round Robin manda 1/3 das requisições para o Servidor 3 (300 ms) mesmo quando ele já está ocupado. O Least Connections manda para quem tem menos requisições em andamento, e como o Servidor 1 termina rápido, ele quase sempre é o escolhido.
 
-O Round Robin apresentou uma mediana menor de tempo de resposta. Já o Least Connections apresentou um menor tempo máximo de resposta nessa execução.
-
-Os resultados indicam desempenhos próximos. Uma avaliação mais conclusiva exigiria repetir os testes em condições controladas e comparar os resultados de várias execuções.
+Os números variam entre execuções (numa execução anterior, os dois ficaram perto de 93 a 94 req/s), então o mais confiável é a comparação feita no mesmo momento e na mesma máquina, como nesta tabela.
 
 ## 11. Considerações técnicas
 
