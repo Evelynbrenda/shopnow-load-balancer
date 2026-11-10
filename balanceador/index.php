@@ -66,7 +66,8 @@ try {
         echo json_encode([
             'error' => 'Falha ao consultar o servidor selecionado.'
         ]);
-        exit;
+        // return (e não exit) para o finally rodar e liberar a conexão.
+        return;
     }
 
     // Registra somente respostas recebidas.
