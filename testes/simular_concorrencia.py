@@ -13,22 +13,8 @@ MAX_WORKERS = 6
 ALGORITHMS = {
     "round_robin": "ROUND ROBIN",
     "least_connections": "LEAST CONNECTIONS",
-    "least_response_time": "LEAST RESPONSE TIME"
+    "ip_hash": "IP HASH"
 }
-
-
-def reset_state():
-    import subprocess
-
-    subprocess.run(
-        [
-            "docker", "compose", "exec", "-T",
-            "balanceador", "sh", "-c",
-            "rm -f /tmp/shopnow_lb_state.json"
-        ],
-        check=True,
-        capture_output=True
-    )
 
 
 def make_request(number, algorithm):
@@ -67,7 +53,6 @@ for algorithm, title in ALGORITHMS.items():
     print(f" SIMULAÇÃO CONCORRENTE: {title}")
     print("=" * 65)
 
-    reset_state()
     print(f"Enviando {TOTAL_REQUESTS} requisições com "
           f"{MAX_WORKERS} trabalhadores simultâneos.\n")
 

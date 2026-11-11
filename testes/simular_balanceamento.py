@@ -2,7 +2,6 @@ import json
 import time
 import urllib.request
 import urllib.parse
-import subprocess
 from collections import defaultdict
 
 BASE_URL = "http://localhost:8080"
@@ -10,33 +9,16 @@ BASE_URL = "http://localhost:8080"
 ALGORITHMS = {
     "round_robin": "ROUND ROBIN",
     "least_connections": "LEAST CONNECTIONS",
-    "least_response_time": "LEAST RESPONSE TIME"
+    "ip_hash": "IP HASH"
 }
 
 TOTAL_REQUESTS = 12
-
-
-def reset_state():
-    """Limpa as métricas do balanceador antes de cada algoritmo."""
-    subprocess.run(
-        [
-            "docker", "compose", "exec", "-T",
-            "balanceador", "sh", "-c",
-            "rm -f /tmp/shopnow_lb_state.json"
-        ],
-        check=True,
-        capture_output=True,
-        text=True
-    )
 
 
 for algorithm, title in ALGORITHMS.items():
     print("\n" + "=" * 65)
     print(f" SIMULAÇÃO: {title}")
     print("=" * 65)
-
-    reset_state()
-    print("Histórico do balanceador reiniciado.\n")
 
     distribution = defaultdict(int)
     total_times = defaultdict(float)

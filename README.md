@@ -1,32 +1,37 @@
-# ShopNow — Load Balancer em PHP
+# ShopNow — Load Balancer com Nginx
 
 ## 1. Sobre o projeto
 
 Projeto acadêmico de Sistemas Distribuídos que implementa um balanceador de carga para uma aplicação fictícia de e-commerce chamada ShopNow.
 
-O balanceador distribui requisições entre três instâncias de servidores, utilizando três algoritmos de distribuição e verificando a disponibilidade das instâncias antes de encaminhar as requisições.
+O balanceador é o **Nginx**, que distribui as requisições entre três instâncias da aplicação usando três algoritmos: **Round Robin**, **Least Connections** e **IP Hash**. Quando uma instância falha, ela é retirada da rotação automaticamente.
 
 O projeto demonstra conceitos de balanceamento de carga, concorrência, monitoramento de disponibilidade e tolerância a falhas.
 
+> A versão anterior, com o balanceador escrito em PHP (incluindo o Least Response Time), está na branch `main`.
+
 ## 2. Tecnologias
 
-- PHP 8.3
-- Apache
+- Nginx 1.27 (balanceador)
+- PHP 8.3 + Apache (instâncias da aplicação)
 - Docker e Docker Compose
-- Python 3
+- Python 3 (simulações)
 - Apache Benchmark (`ab`)
-- SQLite não utilizado neste projeto.
 
 ## 3. Arquitetura
 
+```text
+cliente ──► nginx (:8080) ──► servidor1 (:8081, 30 ms)
+                          ├─► servidor2 (:8082, 150 ms)
+                          └─► servidor3 (:8083, 300 ms)
+```
+
 A aplicação possui quatro containers:
 
-- **Balanceador:** recebe as requisições na porta 8080.
+- **Balanceador (Nginx):** recebe as requisições na porta 8080. Toda a configuração está em [`nginx.conf`](nginx.conf).
 - **Servidor 1:** instância da aplicação na porta 8081.
 - **Servidor 2:** instância da aplicação na porta 8082.
 - **Servidor 3:** instância da aplicação na porta 8083.
-
-O balanceador verifica a saúde das instâncias disponíveis e encaminha cada requisição para o servidor selecionado.
 
 ### Atrasos artificiais
 
@@ -38,14 +43,12 @@ Para simular servidores com capacidades diferentes, foram configurados atrasos a
 | Servidor 2 | 150 ms |
 | Servidor 3 | 300 ms |
 
-Esses atrasos permitem observar como os algoritmos se comportam diante de servidores com tempos de resposta diferentes.
-
 ## 4. Como executar
 
 Na pasta do projeto, execute:
 
 ```bash
-docker compose up --build -d
+make up
 ```
 
 ### Endereços
@@ -58,18 +61,18 @@ docker compose up --build -d
 Para verificar os containers:
 
 ```bash
-docker compose ps
+make status
 ```
 
 ## 5. Algoritmos de balanceamento
 
-O projeto implementa três algoritmos:
+Cada algoritmo é um bloco `upstream` no [`nginx.conf`](nginx.conf). O parâmetro `?algorithm=` da URL escolhe qual upstream será usado (por meio de um `map`). Sem o parâmetro, o padrão é Round Robin. Um valor inválido retorna HTTP 400.
+
+Todos os upstreams usam a diretiva `zone`, que guarda o estado em memória compartilhada. Sem ela, cada processo *worker* do Nginx teria seu próprio contador e o rodízio não seria respeitado entre eles.
 
 ### 5.1 Round Robin
 
-Distribui as requisições alternadamente entre os servidores saudáveis, mantendo um índice para determinar o próximo servidor.
-
-**Acessar:**
+É o algoritmo padrão do Nginx (não precisa de diretiva). Distribui as requisições alternadamente entre os servidores disponíveis.
 
 ```text
 http://localhost:8080/?algorithm=round_robin
@@ -77,41 +80,42 @@ http://localhost:8080/?algorithm=round_robin
 
 ### 5.2 Least Connections
 
-Seleciona o servidor que possui a menor quantidade de requisições em andamento.
-
-O contador de conexões é incrementado antes do encaminhamento e decrementado quando a requisição termina.
-
-Em caso de empate, utiliza alternância entre os servidores candidatos.
-
-**Acessar:**
+Diretiva `least_conn`. Envia a requisição para o servidor com menos requisições em andamento. Em caso de empate, usa rodízio entre os empatados.
 
 ```text
 http://localhost:8080/?algorithm=least_connections
 ```
 
-### 5.3 Least Response Time
+### 5.3 IP Hash
 
-Seleciona o servidor com o menor tempo médio de resposta registrado.
+Diretiva `ip_hash`. O endereço IP do cliente define o servidor, então o mesmo cliente é sempre atendido pela mesma instância. Isso é útil quando a sessão (ex.: carrinho de compras) fica guardada na memória do servidor.
 
-O balanceador atualiza as médias utilizando uma média móvel exponencial, permitindo que medições recentes influenciem a escolha.
-
-Servidores ainda sem histórico de medição recebem requisições iniciais para que o balanceador possa coletar seus tempos de resposta.
-
-**Acessar:**
+Para IPv4, o Nginx usa só os **três primeiros octetos** do IP no cálculo. Por isso todos os testes feitos da mesma máquina (ou da mesma rede Docker) caem no mesmo servidor. Esse é o comportamento esperado e demonstra a afinidade de sessão.
 
 ```text
-http://localhost:8080/?algorithm=least_response_time
+http://localhost:8080/?algorithm=ip_hash
 ```
+
+### Por que não Least Response Time?
+
+O algoritmo `least_time` só existe no **NGINX Plus** (versão paga). A versão open source não mede o tempo de resposta dos servidores para balancear.
 
 ## 6. Verificação de disponibilidade
 
-Antes de selecionar uma instância, o balanceador realiza uma verificação HTTP dos servidores por meio do Health Check.
+O Nginx open source faz **health check passivo**: ele percebe a falha durante uma requisição real, em vez de consultar os servidores periodicamente (o health check ativo também é exclusivo do NGINX Plus).
 
-A verificação utiliza um endpoint específico que informa se o servidor está online, sem aplicar o atraso artificial.
+Configuração usada em cada servidor:
 
-Caso uma instância esteja indisponível, ela é removida da lista de servidores saudáveis e não participa da seleção.
+```nginx
+server servidor1 max_fails=1 fail_timeout=10s;
+```
 
-Se nenhum servidor estiver saudável, o balanceador retorna HTTP 503.
+- `max_fails=1`: uma falha já marca o servidor como indisponível.
+- `fail_timeout=10s`: o servidor fica fora da rotação por 10 segundos e depois volta a ser testado.
+- `proxy_next_upstream error timeout http_502 http_503`: a requisição que falhou é reenviada ao próximo servidor, então o cliente não recebe erro.
+- `proxy_connect_timeout 2s`: não fica esperando muito tempo um servidor que não responde.
+
+Se todos os servidores estiverem indisponíveis, o Nginx retorna HTTP 502.
 
 ## 7. Simulação de falha
 
@@ -127,7 +131,7 @@ Execute a simulação:
 python3 testes/simular_balanceamento.py
 ```
 
-O balanceador deverá continuar encaminhando as requisições para os servidores disponíveis.
+O balanceador continua encaminhando as requisições para os servidores disponíveis. No teste realizado, com o Servidor 3 parado, as requisições foram divididas entre os Servidores 1 e 2, sem erros, tanto no Round Robin quanto no Least Connections. No IP Hash, com o servidor do cliente (Servidor 1) parado, as requisições passaram para outro servidor.
 
 Para restaurar o servidor:
 
@@ -135,38 +139,21 @@ Para restaurar o servidor:
 docker compose start servidor3
 ```
 
-Durante o teste realizado, o Servidor 3 permaneceu indisponível e os outros dois servidores continuaram atendendo às requisições, sem erros.
+O Nginx resolve os nomes dos servidores ao iniciar. Se um container for recriado e mudar de IP, reinicie o balanceador com `docker compose restart balanceador`.
 
-## 8. Testes automatizados
-
-Os algoritmos possuem testes automatizados implementados em PHP puro.
-
-Para executar:
+## 8. Testes
 
 ```bash
 make test
 ```
 
-**Resultado obtido:**
-
-- 11 testes aprovados.
-- 0 testes reprovados.
-
-Os testes verificam o funcionamento do Round Robin, Least Connections e Least Response Time, incluindo situações de empate, ausência de medições e atualização das médias de resposta.
+O comando valida a configuração do Nginx (`nginx -t`) e executa a simulação sequencial.
 
 ## 9. Simulações de balanceamento
 
 O projeto possui dois scripts em Python para simular o comportamento dos algoritmos.
 
 ### 9.1 Simulação sequencial
-
-Arquivo:
-
-```text
-testes/simular_balanceamento.py
-```
-
-Execução:
 
 ```bash
 python3 testes/simular_balanceamento.py
@@ -180,23 +167,11 @@ São realizadas 12 requisições sequenciais para cada algoritmo.
 |---|---:|---:|---:|
 | Round Robin | 4 | 4 | 4 |
 | Least Connections | 4 | 4 | 4 |
-| Least Response Time | 10 | 1 | 1 |
+| IP Hash | 12 | 0 | 0 |
 
-O Round Robin distribuiu igualmente as requisições.
-
-O Least Connections também apresentou distribuição equilibrada porque as requisições eram sequenciais e as conexões eram liberadas antes da próxima seleção.
-
-O Least Response Time priorizou o servidor com menor tempo médio de resposta.
+O Least Connections ficou igual ao Round Robin porque as requisições eram sequenciais: cada uma termina antes da próxima, então todos os servidores ficam sempre com zero conexões (empate). O IP Hash mandou tudo para o mesmo servidor porque todas as requisições vieram do mesmo cliente.
 
 ### 9.2 Simulação concorrente
-
-Arquivo:
-
-```text
-testes/simular_concorrencia.py
-```
-
-Execução:
 
 ```bash
 python3 testes/simular_concorrencia.py
@@ -210,82 +185,63 @@ Foram realizadas 18 requisições com até 6 trabalhadores simultâneos.
 |---|---:|---:|---:|
 | Round Robin | 6 | 6 | 6 |
 | Least Connections | 12 | 4 | 2 |
-| Least Response Time | 9 | 3 | 6 |
+| IP Hash | 18 | 0 | 0 |
 
-A simulação demonstrou comportamentos diferentes:
+- **Round Robin:** distribuição uniforme, sem considerar a velocidade dos servidores.
+- **Least Connections:** mais requisições para o Servidor 1, que termina rápido e volta a ficar livre.
+- **IP Hash:** todas no mesmo servidor (mesmo cliente).
 
-- **Round Robin:** manteve a distribuição uniforme, sem considerar a velocidade dos servidores.
-- **Least Connections:** direcionou mais requisições ao Servidor 1, que conclui suas requisições mais rapidamente e volta a ficar disponível.
-- **Least Response Time:** priorizou servidores com melhores tempos médios registrados.
-
-Nas simulações realizadas, todas as requisições foram concluídas com HTTP 200 e sem erros.
+Todas as requisições foram concluídas com HTTP 200 e sem erros.
 
 ## 10. Testes de carga com Apache Benchmark
 
-Os testes de desempenho também foram realizados com Apache Benchmark, utilizando um container Alpine com a ferramenta instalada.
+Os testes de desempenho foram realizados com Apache Benchmark, usando um container Alpine com a ferramenta instalada.
 
 ### Parâmetros utilizados
 
 - Total de requisições: 1.000.
 - Concorrência: 50 requisições simultâneas.
 - Servidores: três instâncias.
-- Ferramenta: Apache Benchmark (`ab`).
 
-### Round Robin
+### Comandos
 
 ```bash
 docker run --rm --network shopnow-load-balancer_default alpine:3.20 sh -c "apk add --no-cache apache2-utils >/dev/null && ab -n 1000 -c 50 'http://balanceador/?algorithm=round_robin'"
-```
-
-### Least Connections
-
-```bash
 docker run --rm --network shopnow-load-balancer_default alpine:3.20 sh -c "apk add --no-cache apache2-utils >/dev/null && ab -n 1000 -c 50 'http://balanceador/?algorithm=least_connections'"
+docker run --rm --network shopnow-load-balancer_default alpine:3.20 sh -c "apk add --no-cache apache2-utils >/dev/null && ab -n 1000 -c 50 'http://balanceador/?algorithm=ip_hash'"
 ```
 
 ### Resultados obtidos
 
-| Métrica | Round Robin | Least Connections |
-|---|---:|---:|
-| Requisições concluídas | 1.000 | 1.000 |
-| Falhas reais (Connect / Receive / Exceptions / não-2xx) | 0 | 0 |
-| "Failed requests" do ab (todas do tipo `Length`) | 666 | 301 |
-| Tempo total | 7,691 s | 6,356 s |
-| Requisições por segundo | 130,02 | 157,33 |
-| Tempo médio por requisição | 384,550 ms | 317,800 ms |
-| Mediana | 350 ms | 266 ms |
-| 95% das requisições em até | 790 ms | 621 ms |
-| Maior tempo | 1.032 ms | 921 ms |
+| Métrica | Round Robin | Least Connections | IP Hash |
+|---|---:|---:|---:|
+| Requisições concluídas | 1.000 | 1.000 | 1.000 |
+| Falhas reais (Connect / Receive / Exceptions / não-2xx) | 0 | 0 | 0 |
+| "Failed requests" do ab (todas do tipo `Length`) | 648 | 678 | 0 |
+| Tempo total | 5,892 s | 2,685 s | 2,483 s |
+| Requisições por segundo | 169,72 | 372,50 | 402,76 |
+| Tempo médio por requisição | 294,605 ms | 134,227 ms | 124,145 ms |
+| Mediana | 152 ms | 63 ms | 124 ms |
+| 95% das requisições em até | 1.050 ms | 303 ms | 155 ms |
+| Maior tempo | 1.209 ms | 455 ms | 163 ms |
 
 ### Sobre o "Failed requests"
 
-O `ab` usa o tamanho da primeira resposta como referência (161 bytes) e conta como falha qualquer resposta de tamanho diferente. O Servidor 1 responde `"artificial_delay_ms": 30` e os Servidores 2 e 3 respondem `150` e `300`, um dígito a mais. Então essas "falhas" são só respostas dos Servidores 2 e 3, todas com HTTP 200.
+O `ab` usa o tamanho da primeira resposta como referência e conta como falha qualquer resposta de tamanho diferente. O Servidor 1 responde `"artificial_delay_ms": 30` (161 bytes) e os Servidores 2 e 3 respondem `150` e `300` (162 bytes). Então essas "falhas" são só respostas de servidores diferentes do primeiro, todas com HTTP 200. Isso acaba mostrando a distribuição:
 
-Isso acaba mostrando a distribuição:
-
-- Round Robin: 666 de 1.000, exatamente 2/3 para os Servidores 2 e 3.
-- Least Connections: 301 de 1.000, ou seja, cerca de 70% foi para o Servidor 1.
+- **Round Robin:** a primeira resposta veio do Servidor 1 (161 bytes). As 648 "falhas" são as respostas dos Servidores 2 e 3, cerca de 2/3 do total.
+- **Least Connections:** a primeira resposta veio do Servidor 2 ou 3 (162 bytes). As 678 "falhas" são as respostas do Servidor 1, ou seja, cerca de 68% foi para o servidor mais rápido.
+- **IP Hash:** 0 "falhas", porque todas as respostas vieram do mesmo servidor (o Servidor 1).
 
 ### Análise dos resultados
 
-Nessa execução o Least Connections foi melhor em todas as métricas: cerca de 21% mais requisições por segundo e mediana 84 ms menor.
+- O **Least Connections** teve mais que o dobro de requisições por segundo do Round Robin e mediana 89 ms menor. O Round Robin manda 1/3 das requisições para o Servidor 3 (300 ms) mesmo quando ele já está sobrecarregado, o que faz o 95º percentil passar de 1 segundo.
+- O **IP Hash** teve o melhor número apenas porque o hash do cliente de teste caiu no Servidor 1, o mais rápido. Com outro IP poderia cair no Servidor 3 e ser o pior resultado. Ele não serve para comparar desempenho, e sim para garantir afinidade de sessão.
 
-O motivo é que o Round Robin manda 1/3 das requisições para o Servidor 3 (300 ms) mesmo quando ele já está ocupado. O Least Connections manda para quem tem menos requisições em andamento, e como o Servidor 1 termina rápido, ele quase sempre é o escolhido.
+Os números variam entre execuções, então o mais confiável é a comparação feita no mesmo momento e na mesma máquina, como nesta tabela.
 
-Os números variam entre execuções (numa execução anterior, os dois ficaram perto de 93 a 94 req/s), então o mais confiável é a comparação feita no mesmo momento e na mesma máquina, como nesta tabela.
-
-## 11. Considerações técnicas
-
-O estado compartilhado do balanceador utiliza um arquivo temporário e `flock` para coordenar o acesso entre processos Apache.
-
-O projeto possui finalidade didática e demonstra conceitos de distribuição de carga, concorrência, disponibilidade e tolerância a falhas.
-
-Não substitui um proxy ou balanceador de carga preparado para ambientes de produção.
-
-## 12. Encerrar a aplicação
-
-Para parar e remover os containers:
+## 11. Encerrar a aplicação
 
 ```bash
-docker compose down
+make down
 ```

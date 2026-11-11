@@ -20,4 +20,5 @@ logs:
 	docker compose logs -f
 
 test:
-	docker run --rm -v "$(CURDIR):/app" -w /app php:8.3-cli php testes/test_algoritmos.php
+	docker compose exec balanceador nginx -t
+	python3 testes/simular_balanceamento.py
